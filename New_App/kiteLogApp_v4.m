@@ -1,7 +1,7 @@
-function kiteLogApp_v2
-%KITELOGAPP_V3 UC3M AWE kite log plotting app (fixed + improved).
+function kiteLogApp_v4
+%KITELOGAPP_V4 UC3M AWE kite log plotting app with histograms & boxplots.
 
-    % Shared application state
+    % Shared state (captured by nested functions)
     dataTable = table();
     meta      = struct();
     ui        = struct();
@@ -9,7 +9,7 @@ function kiteLogApp_v2
     createComponents();
 
     %==================================================================%
-    %                           NESTED UI                              %
+    %                         NESTED UI SETUP                          %
     %==================================================================%
 
     function createComponents()
@@ -49,13 +49,13 @@ function kiteLogApp_v2
         ui.logoRight.ImageSource   = 'logo.jpg';
         ui.logoRight.ScaleMethod   = 'fit';
 
-        %---------------- Body: left controls + right plot --------------%
+        %---------------- Body ----------------%
         bodyGrid = uigridlayout(mainGrid,[1 2]);
         bodyGrid.Layout.Row    = 2;
         bodyGrid.Layout.Column = 1;
         bodyGrid.ColumnWidth   = {320,'1x'};
 
-        %----- Left: tab group (Plot / Figure) -----%
+        % Left: tab group
         ui.tabGroup = uitabgroup(bodyGrid);
         ui.tabGroup.Layout.Row    = 1;
         ui.tabGroup.Layout.Column = 1;
@@ -64,91 +64,113 @@ function kiteLogApp_v2
         ui.tabFigure = uitab(ui.tabGroup,'Title','Figure');
 
         %---------------- PLOT TAB ----------------%
-        plotGrid = uigridlayout(ui.tabPlot,[10 2]);
-        plotGrid.RowHeight   = {30,30,20,30,20,'1x',30,30,30,30};
-        plotGrid.ColumnWidth = {100,'1x'};
+        % 11 rows: load, file, plot type, X, Y, layout, grid/legend, buttons
+        plotGrid = uigridlayout(ui.tabPlot,[11 2]);
+        plotGrid.RowHeight   = {30,30,20,30,20,30,20,'1x',30,30,30};
+        plotGrid.ColumnWidth = {110,'1x'};
 
+        % 1) Load button
         ui.loadButton = uibutton(plotGrid, ...
             'Text','Load CSV log...', ...
             'ButtonPushedFcn',@onLoadLog);
         ui.loadButton.Layout.Row    = 1;
         ui.loadButton.Layout.Column = [1 2];
 
+        % 2) File label
         ui.fileLabel = uilabel(plotGrid, ...
             'Text','No file loaded');
         ui.fileLabel.Layout.Row    = 2;
         ui.fileLabel.Layout.Column = [1 2];
         ui.fileLabel.WordWrap      = 'on';
 
+        % 3) Plot kind selector
+        ui.plotKindLbl = uilabel(plotGrid, ...
+            'Text','Plot type:', ...
+            'HorizontalAlignment','right');
+        ui.plotKindLbl.Layout.Row    = 3;
+        ui.plotKindLbl.Layout.Column = 1;
+
+        ui.plotKindDropDown = uidropdown(plotGrid, ...
+            'Items',{'Time series','Histogram','Boxplot'}, ...
+            'ItemsData',{'timeseries','histogram','boxplot'}, ...
+            'Value','timeseries', ...
+            'ValueChangedFcn',@onPlotKindChanged);
+        ui.plotKindDropDown.Layout.Row    = 4;
+        ui.plotKindDropDown.Layout.Column = 2;
+
+        % 4) X variable
         ui.xLabelLbl = uilabel(plotGrid, ...
             'Text','X variable:', ...
             'HorizontalAlignment','right');
-        ui.xLabelLbl.Layout.Row    = 3;
+        ui.xLabelLbl.Layout.Row    = 5;
         ui.xLabelLbl.Layout.Column = 1;
 
         ui.xVarDropDown = uidropdown(plotGrid, ...
             'Items',{}, ...
             'ItemsData',{}, ...
             'ValueChangedFcn',@onXVarChanged);
-        ui.xVarDropDown.Layout.Row    = 4;
+        ui.xVarDropDown.Layout.Row    = 6;
         ui.xVarDropDown.Layout.Column = 2;
 
+        % 5) Y variables
         ui.yLabelLbl = uilabel(plotGrid, ...
             'Text','Y variable(s):', ...
             'HorizontalAlignment','right');
-        ui.yLabelLbl.Layout.Row    = 5;
+        ui.yLabelLbl.Layout.Row    = 7;
         ui.yLabelLbl.Layout.Column = 1;
 
         ui.yVarList = uilistbox(plotGrid, ...
             'Items',{}, ...
             'Multiselect','on', ...
             'ValueChangedFcn',@onYVarChanged);
-        ui.yVarList.Layout.Row    = 6;
+        ui.yVarList.Layout.Row    = 8;
         ui.yVarList.Layout.Column = 2;
 
+        % 6) Layout (time series only)
         ui.layoutLbl = uilabel(plotGrid, ...
             'Text','Layout:', ...
             'HorizontalAlignment','right');
-        ui.layoutLbl.Layout.Row    = 7;
+        ui.layoutLbl.Layout.Row    = 9;
         ui.layoutLbl.Layout.Column = 1;
 
         ui.layoutDropDown = uidropdown(plotGrid, ...
             'Items',{'Single axes','Stacked axes'}, ...
             'ItemsData',{'single','stacked'}, ...
             'Value','stacked');
-        ui.layoutDropDown.Layout.Row    = 7;
+        ui.layoutDropDown.Layout.Row    = 9;
         ui.layoutDropDown.Layout.Column = 2;
 
+        % 7) Grid / legend
         ui.gridCheck = uicheckbox(plotGrid, ...
             'Text','Show grid', ...
             'Value',true);
-        ui.gridCheck.Layout.Row    = 8;
+        ui.gridCheck.Layout.Row    = 10;
         ui.gridCheck.Layout.Column = 1;
 
         ui.legendCheck = uicheckbox(plotGrid, ...
             'Text','Show legend', ...
             'Value',true);
-        ui.legendCheck.Layout.Row    = 8;
+        ui.legendCheck.Layout.Row    = 10;
         ui.legendCheck.Layout.Column = 2;
 
+        % 8) Plot & export
         ui.plotButton = uibutton(plotGrid, ...
             'Text','Plot', ...
             'ButtonPushedFcn',@onPlotPressed);
-        ui.plotButton.Layout.Row    = 9;
+        ui.plotButton.Layout.Row    = 11;
         ui.plotButton.Layout.Column = 1;
 
         ui.exportButton = uibutton(plotGrid, ...
             'Text','Export PNG...', ...
             'ButtonPushedFcn',@onExportPressed, ...
             'Enable','off');
-        ui.exportButton.Layout.Row    = 9;
+        ui.exportButton.Layout.Row    = 11;
         ui.exportButton.Layout.Column = 2;
 
         %---------------- FIGURE TAB ----------------%
-        % 12 rows: labels + font sizes + legend + color + style
         figGrid = uigridlayout(ui.tabFigure,[12 2]);
         figGrid.RowHeight   = {20,30,20,30,20,30,30,30,30,30,30,30};
-        figGrid.ColumnWidth = {110,'1x'};
+        figGrid.ColumnWidth = {130,'1x'};
 
         ui.titleLbl = uilabel(figGrid, ...
             'Text','Title:', ...
@@ -175,7 +197,7 @@ function kiteLogApp_v2
         ui.xAxisEdit.Layout.Column = 2;
 
         ui.yAxisLbl = uilabel(figGrid, ...
-            'Text','Y label (single axes):', ...
+            'Text','Y label (single axes / boxplot):', ...
             'HorizontalAlignment','right');
         ui.yAxisLbl.Layout.Row    = 5;
         ui.yAxisLbl.Layout.Column = 1;
@@ -242,23 +264,23 @@ function kiteLogApp_v2
 
         ui.colorDropDown = uidropdown(figGrid, ...
             'Items',{'Default','Lines','Parula','Turbo','Gray'}, ...
-            'Value','Default');    % no ItemsData here
+            'Value','Default');
         ui.colorDropDown.Layout.Row    = 11;
         ui.colorDropDown.Layout.Column = 2;
 
         ui.plotStyleLbl = uilabel(figGrid, ...
-            'Text','Plot style:', ...
+            'Text','Plot style (time series):', ...
             'HorizontalAlignment','right');
         ui.plotStyleLbl.Layout.Row    = 12;
         ui.plotStyleLbl.Layout.Column = 1;
 
         ui.plotStyleDropDown = uidropdown(figGrid, ...
             'Items',{'Line','Line with markers','Scatter'}, ...
-            'Value','Line');       % no ItemsData here
+            'Value','Line');
         ui.plotStyleDropDown.Layout.Row    = 12;
         ui.plotStyleDropDown.Layout.Column = 2;
 
-        %---------------- Right: plot panel ----------------%
+        %---------------- Plot panel on the right ----------------%
         ui.plotPanel = uipanel(bodyGrid);
         ui.plotPanel.Layout.Row    = 1;
         ui.plotPanel.Layout.Column = 2;
@@ -286,7 +308,9 @@ function kiteLogApp_v2
         ui.statusLabel.Layout.Column = 1;
     end
 
-    %--------------------------- Callbacks ------------------------------%
+    %==================================================================%
+    %                           CALLBACKS                              %
+    %==================================================================%
 
     function figSettings = getFigureSettings()
         figSettings = struct();
@@ -294,10 +318,97 @@ function kiteLogApp_v2
         figSettings.LabelFontSize  = ui.labelSizeSpinner.Value;
         figSettings.TickFontSize   = ui.tickSizeSpinner.Value;
         figSettings.LegendFontSize = ui.legendSizeSpinner.Value;
-        rawColor = ui.colorDropDown.Value;
-        figSettings.ColorScheme = lower(strrep(rawColor,' ',''));
-        figSettings.PlotStyle   = mapPlotStyle(ui.plotStyleDropDown.Value);
-        figSettings.FontName    = 'Times New Roman';
+        rawColor                   = ui.colorDropDown.Value;
+        figSettings.ColorScheme    = lower(strrep(rawColor,' ','')); % 'default','parula',...
+        figSettings.PlotStyle      = mapPlotStyle(ui.plotStyleDropDown.Value);
+        figSettings.FontName       = 'Times New Roman';
+    end
+
+    % Refresh Y-variable list depending on plot type
+    function updateYVarListForPlotKind(kind)
+        if nargin < 1 || isempty(kind)
+            kind = ui.plotKindDropDown.Value;
+        end
+
+        if isempty(dataTable)
+            ui.yVarList.Items = {};
+            ui.yVarList.Value = {};
+            return;
+        end
+
+        switch kind
+            case 'boxplot'
+                if isfield(meta,'boxplotVars') && ~isempty(meta.boxplotVars)
+                    list = string(meta.boxplotVars);
+                else
+                    list = string([]);
+                end
+            case 'histogram'
+                % For histogram we only care about tether tension channels
+                if isfield(meta,'tensionVars') && ~isempty(meta.tensionVars)
+                    list = string(meta.tensionVars);
+                else
+                    list = string([]);
+                end
+            otherwise % 'timeseries'
+                if isfield(meta,'allYVars') && ~isempty(meta.allYVars)
+                    list = string(meta.allYVars);
+                else
+                    list = string([]);
+                end
+        end
+
+        ui.yVarList.Items = cellstr(list);
+
+        if isempty(list)
+            ui.yVarList.Value = {};
+        else
+            % Try to keep existing selections if still valid
+            oldVal  = string(ui.yVarList.Value);
+            keep    = ismember(oldVal,list);
+            newVal  = oldVal(keep);
+            if isempty(newVal)
+                nDefault = min(3,numel(list));
+                newVal   = list(1:nDefault);
+            end
+            ui.yVarList.Value = cellstr(newVal);
+        end
+    end
+
+    function onPlotKindChanged(src,~)
+        kind   = src.Value;                 % 'timeseries' | 'histogram' | 'boxplot'
+        isTime = strcmp(kind,'timeseries');
+
+        if isTime
+            ui.xLabelLbl.Enable      = 'on';
+            ui.xVarDropDown.Enable   = 'on';
+            ui.layoutLbl.Enable      = 'on';
+            ui.layoutDropDown.Enable = 'on';
+        else
+            ui.xLabelLbl.Enable      = 'off';
+            ui.xVarDropDown.Enable   = 'off';
+            ui.layoutLbl.Enable      = 'off';
+            ui.layoutDropDown.Enable = 'off';
+
+            % Sensible default layouts for non-time-series
+            if strcmp(kind,'histogram')
+                ui.layoutDropDown.Value = 'stacked';
+            else % boxplot
+                ui.layoutDropDown.Value = 'single';
+            end
+        end
+
+        % Y variable list behaviour
+        if strcmp(kind,'histogram')
+            % Histogram is dedicated to tether tension distribution
+            ui.yVarList.Enable = 'off';
+            ui.yLabelLbl.Text  = 'Y variable(s): (tether tension)';
+        else
+            ui.yVarList.Enable = 'on';
+            ui.yLabelLbl.Text  = 'Y variable(s):';
+        end
+
+        updateYVarListForPlotKind(kind);
     end
 
     function onLoadLog(~,~)
@@ -325,13 +436,20 @@ function kiteLogApp_v2
         % Y candidates: numeric vars
         numericMask = varfun(@isnumeric,dataTable,'OutputFormat','uniform');
         yNames      = varNames(numericMask);
-        ui.yVarList.Items = cellstr(yNames);
-        if ~isempty(yNames)
-            nDefault = min(3,numel(yNames));
-            ui.yVarList.Value = cellstr(yNames(1:nDefault));
-        else
-            ui.yVarList.Value = {};
-        end
+
+        % Store lists for later filtering
+        meta.allYVars = yNames;
+
+        tensionCandidates = ["ADC_LC_left","ADC_LC_center","ADC_LC_right", ...
+                             "LC_left","LC_center","LC_right"];
+        meta.tensionVars = tensionCandidates(ismember(tensionCandidates,yNames));
+
+        % Boxplot only for delta-type variables
+        boxplotCandidates = ["CONTROL_deltaL","CONTROL_thirdLineDeltaL"];
+        meta.boxplotVars  = boxplotCandidates(ismember(boxplotCandidates,yNames));
+
+        % Initialise Y-variable list according to current plot type
+        updateYVarListForPlotKind();
 
         % Default X: Time_s if available
         if isfield(meta,'defaultXVar') && any(varNames == meta.defaultXVar)
@@ -393,7 +511,7 @@ function kiteLogApp_v2
     end
 
     function onLabelEdited(~,~)
-        % placeholder hook
+        % placeholder (user overrides already stored in edit fields)
     end
 
     function onPlotPressed(~,~)
@@ -404,7 +522,10 @@ function kiteLogApp_v2
 
         xVar  = ui.xVarDropDown.Value;
         yVars = ui.yVarList.Value;
-        if isempty(yVars)
+
+        % For histogram we ignore Y selection and use fixed tether channels,
+        % but we still require at least one Y variable for other plots.
+        if isempty(yVars) && ~strcmp(ui.plotKindDropDown.Value,'histogram')
             uialert(ui.fig,'Select at least one Y variable to plot.','No Y variable');
             return;
         end
@@ -415,14 +536,15 @@ function kiteLogApp_v2
 
         plotOpts.ShowGrid   = logical(ui.gridCheck.Value);
         plotOpts.ShowLegend = logical(ui.legendCheck.Value);
-        plotOpts.Layout     = ui.layoutDropDown.Value;  % 'single' or 'stacked'
+        plotOpts.Layout     = ui.layoutDropDown.Value;           % 'single' / 'stacked'
+        plotOpts.PlotKind   = ui.plotKindDropDown.Value;         % 'timeseries' / 'histogram' / 'boxplot'
 
         figSettings = getFigureSettings();
 
         plotLogData(ui.plotGrid,dataTable,xVar,yVars,labels,plotOpts,figSettings);
 
-        ui.statusLabel.Text = sprintf('Plotted %d variable(s) vs %s (%s layout).', ...
-            numel(yVars),xVar,plotOpts.Layout);
+        ui.statusLabel.Text = sprintf('%s plot of %d variable(s).', ...
+            upper(plotOpts.PlotKind(1)), max(1,numel(yVars)));
         ui.exportButton.Enable = 'on';
     end
 
@@ -458,17 +580,16 @@ end
 %=========================================================================%
 
 function [tbl, meta] = readKiteLog(filename)
-%READKITELOG  Read kite log CSV and assign fixed variable names.
+%READKITELOG  Read kite log CSV and assign fixed channel names.
 %
-%   Assumptions:
-%     - CSV has NO header row.
-%     - Column 1: human-readable timestamp string
-%     - Columns 2..end: data channels in the fixed order given below.
-%     - If the file has more columns than listed, extra columns are named
-%       'Extra_<index>'.
+%   CSV has NO header row; columns are:
+%     col 1 -> CONTROL_timestamp_us
+%     col 2 -> PX_time_boot_ms
+%     ...
+%   A derived Time_s (s from start) is added for plotting.
 
-    % Fixed list of data-channel names for columns 2..(1+N)
-    dataVarNames = { ...
+    % Fixed list of names (exactly as in your original code)
+    varNames = { ...
         'CONTROL_timestamp_us'
         'PX_time_boot_ms'
         'PX_time_unix_usec'
@@ -568,65 +689,66 @@ function [tbl, meta] = readKiteLog(filename)
         'CONTROL_PID_pitch_e_i'
         'CONTROL_PID_pitch_e_d'};
 
-    % Read the CSV with no header
-    tblRaw = readtable(filename, ...
+    % Read file as numeric matrix (no headers)
+    raw = readmatrix(filename, ...
         'FileType','text', ...
         'Delimiter',',', ...
-        'ReadVariableNames',false, ...
-        'TextType','string');
+        'Range','B1');   % skip column 1 (text / index)
+    nCols = size(raw, 2);
 
-    nCols = width(tblRaw);
-
-    % Build full list of variable names
-    varNames = cell(1,nCols);
-    varNames{1} = 'TimeStamp';   % column 1 = human-readable timestamp
-
-    nDataNames = numel(dataVarNames);
-    maxDataCols = min(nDataNames, nCols-1);
-
-    % Map dataVarNames to columns 2..(1+maxDataCols)
-    for k = 1:maxDataCols
-        varNames{1+k} = dataVarNames{k};
-    end
-
-    % Any remaining columns (if CSV has more than 1+numel(dataVarNames))
-    for j = 1:nCols
-        if isempty(varNames{j})
-            % j-1 because column 1 is the timestamp
-            varNames{j} = sprintf('Extra_%d', j-1);
+    % Adjust list of names to the real number of columns
+    if nCols > numel(varNames)
+        for i = numel(varNames)+1:nCols
+            varNames{end+1} = sprintf('extra_col_%d', i);
         end
+    elseif nCols < numel(varNames)
+        varNames = varNames(1:nCols);
     end
 
-    % Apply names
-    tbl = tblRaw;
-    tbl.Properties.VariableNames = varNames;
+    % Create table with those names
+    tbl = array2table(raw, 'VariableNames', varNames);
 
-    % Convert timestamp column and create Time_s
-    try
-        tbl.TimeStamp = datetime(tbl.TimeStamp, ...
-            'InputFormat','yyyy-MM-dd HH:mm:ss.SSSSSS', ...
-            'TimeZone','');
-    catch
-        tbl.TimeStamp = datetime(tbl.TimeStamp);
+    % Derived time in seconds from CONTROL_timestamp_us
+    if ismember('CONTROL_timestamp_us', varNames)
+        t0         = tbl.CONTROL_timestamp_us(1);
+        tbl.Time_s = (tbl.CONTROL_timestamp_us - t0) * 1e-6;  % µs -> s
+    else
+        tbl.Time_s = (0:height(tbl)-1).';  % fallback
     end
 
-    t0         = tbl.TimeStamp(1);
-    tbl.Time_s = seconds(tbl.TimeStamp - t0);
+    % Adjust variable names if needed (kept from your original code)
+    if height(tbl) > 0
+        tbl.Properties.VariableNames = circshift(tbl.Properties.VariableNames, -1);
+    end
 
-    % Metadata for the rest of the app
+    % Metadata for the app
     meta = struct();
     meta.file            = filename;
-    meta.timeStampName   = 'TimeStamp';
+    meta.timeStampName   = 'CONTROL_timestamp_us';
     meta.timeSecondsName = 'Time_s';
-    meta.defaultXVar     = 'Time_s';
+    meta.defaultXVar     = 'CONTROL_timestamp_us';
     meta.variableNames   = tbl.Properties.VariableNames;
 end
-
 
 %-------------------------------------------------------------------------%
 
 function plotLogData(plotGrid,tbl,xVar,yVars,labels,plotOpts,figSettings)
-%PLOTLOGDATA  Plot selected variables with single/stacked layout.
+% Dispatch to the appropriate plot type.
+
+    switch plotOpts.PlotKind
+        case 'histogram'
+            plotHistogramGrid(plotGrid,tbl,yVars,labels,plotOpts,figSettings);
+        case 'boxplot'
+            plotBoxplotGrid(plotGrid,tbl,yVars,labels,plotOpts,figSettings);
+        otherwise % 'timeseries'
+            plotTimeSeriesGrid(plotGrid,tbl,xVar,yVars,labels,plotOpts,figSettings);
+    end
+end
+
+%-------------------------------------------------------------------------%
+
+function plotTimeSeriesGrid(plotGrid,tbl,xVar,yVars,labels,plotOpts,figSettings)
+%TIME SERIES plotting (single or stacked axes).
 
     if isstring(yVars)
         yVars = cellstr(yVars);
@@ -659,7 +781,7 @@ function plotLogData(plotGrid,tbl,xVar,yVars,labels,plotOpts,figSettings)
             if k ~= nY
                 localLabels.XLabel = '';
             end
-            localLabels.YLabel = '';   % auto from variable name
+            localLabels.YLabel = '';
 
             plotSingleAxes(ax,tbl,xVar,yVars(k),localLabels,plotOpts,figSettings);
         end
@@ -667,8 +789,274 @@ function plotLogData(plotGrid,tbl,xVar,yVars,labels,plotOpts,figSettings)
 end
 
 %-------------------------------------------------------------------------%
+%  NEW: specialized histogram for normalized tether tensions
+%-------------------------------------------------------------------------%
+
+function plotHistogramGrid(plotGrid,tbl,yVars,labels,plotOpts,figSettings)
+%PLOTHISTOGRAMGRID  Distribution of normalized tether tensions.
+%
+%   If the table contains line-tension channels (ADC_LC_left/center/right
+%   or LC_left/center/right), we compute the normalized tension fractions
+%
+%       frac_i = LC_i / (LC_left + LC_center + LC_right)
+%
+%   and plot three stacked histograms (central, left, right).  If those
+%   channels are not present, we fall back to a generic histogram of the
+%   selected variables.
+
+    names = tbl.Properties.VariableNames;
+
+    candidateSets = {
+        {'ADC_LC_left','ADC_LC_center','ADC_LC_right'}
+        {'LC_left','LC_center','LC_right'}
+    };
+
+    lineVars = {};
+    for s = 1:numel(candidateSets)
+        if all(ismember(candidateSets{s}, names))
+            lineVars = candidateSets{s};
+            break;
+        end
+    end
+
+    % Fallback: generic histogram if we cannot find line tensions
+    if isempty(lineVars)
+        plotHistogramGridGeneric(plotGrid,tbl,yVars,labels,plotOpts,figSettings);
+        return;
+    end
+
+    % left / center / right data
+    L  = tbl.(lineVars{1});
+    C  = tbl.(lineVars{2});
+    R  = tbl.(lineVars{3});
+
+    sumT = L + C + R;
+    valid = isfinite(sumT) & sumT > 0 & ...
+            isfinite(L) & isfinite(C) & isfinite(R);
+
+    Ln = L(valid) ./ sumT(valid);
+    Cn = C(valid) ./ sumT(valid);
+    Rn = R(valid) ./ sumT(valid);
+
+    % Keep values strictly inside [0,1] to avoid artefacts
+    Ln = Ln(Ln >= 0 & Ln <= 1);
+    Cn = Cn(Cn >= 0 & Cn <= 1);
+    Rn = Rn(Rn >= 0 & Rn <= 1);
+
+    % Order to mimic example: central, left, right
+    dataCell   = {Cn, Ln, Rn};
+    lineTitles = {'Línea central','Línea izquierda','Línea derecha'};
+
+    delete(plotGrid.Children);
+    plotGrid.RowHeight   = repmat({'1x'},1,3);
+    plotGrid.ColumnWidth = {'1x'};
+
+    colors = chooseColorScheme(figSettings.ColorScheme,1); % same color
+
+    for k = 1:3
+        ax = uiaxes(plotGrid);
+        ax.Layout.Row    = k;
+        ax.Layout.Column = 1;
+
+        ax.FontName = figSettings.FontName;
+        ax.FontSize = figSettings.TickFontSize;
+        box(ax,'on');
+        if plotOpts.ShowGrid
+            grid(ax,'on');
+        else
+            grid(ax,'off');
+        end
+
+        h = histogram(ax,dataCell{k}, ...
+            'NumBins',50, ...
+            'BinLimits',[0 1]);
+        h.FaceColor = colors(1,:);
+        h.EdgeColor = 'black'; % Set the edge color to black for a more elegant look
+
+        % Titles
+        if k == 1 && ~isempty(strtrim(labels.Title))
+            titleText = labels.Title;
+        else
+            titleText = lineTitles{k};
+        end
+        title(ax,titleText,'Interpreter','latex');
+        ax.Title.FontSize = figSettings.TitleFontSize;
+
+        % Only bottom axes have X label
+        if k == 3
+            if ~isempty(strtrim(labels.XLabel))
+                xlabel(ax,labels.XLabel,'Interpreter','latex');
+            else
+                xlabel(ax,'Fracción de tensión normalizada','Interpreter','latex');
+            end
+            ax.XLabel.FontSize = figSettings.LabelFontSize;
+        else
+            xlabel(ax,'','Interpreter','latex');
+        end
+
+        ylabel(ax,'Recuentos','Interpreter','latex');
+        ax.YLabel.FontSize = figSettings.LabelFontSize;
+
+        xlim(ax,[0 1]);
+    end
+end
+
+function plotHistogramGridGeneric(plotGrid,tbl,yVars,labels,plotOpts,figSettings)
+%PLOTHISTOGRAMGRIDGENERIC  Fallback: histograms of selected variables.
+
+    if isstring(yVars)
+        yVars = cellstr(yVars);
+    elseif ischar(yVars)
+        yVars = {yVars};
+    end
+    nY = numel(yVars);
+
+    delete(plotGrid.Children);
+
+    if nY == 0
+        plotGrid.RowHeight   = {'1x'};
+        plotGrid.ColumnWidth = {'1x'};
+        ax = uiaxes(plotGrid);
+        ax.Layout.Row    = 1;
+        ax.Layout.Column = 1;
+        title(ax,'No variables selected for histogram','Interpreter','latex');
+        return;
+    end
+
+    plotGrid.RowHeight   = repmat({'1x'},1,nY);
+    plotGrid.ColumnWidth = {'1x'};
+
+    colors = chooseColorScheme(figSettings.ColorScheme,1); % same color
+
+    for k = 1:nY
+        ax = uiaxes(plotGrid);
+        ax.Layout.Row    = k;
+        ax.Layout.Column = 1;
+
+        ax.FontName = figSettings.FontName;
+        ax.FontSize = figSettings.TickFontSize;
+        box(ax,'on');
+        if plotOpts.ShowGrid
+            grid(ax,'on');
+        else
+            grid(ax,'off');
+        end
+
+        data = tbl.(yVars{k});
+        data = data(~isnan(data));
+
+        h = histogram(ax,data);
+        h.FaceColor = colors(1,:);
+        h.EdgeColor = 'none';
+
+        if k == 1 && ~isempty(strtrim(labels.Title))
+            title(ax,labels.Title,'Interpreter','latex');
+            ax.Title.FontSize = figSettings.TitleFontSize;
+        else
+            title(ax,'','Interpreter','latex');
+        end
+
+        if ~isempty(strtrim(labels.XLabel))
+            xlabel(ax,labels.XLabel,'Interpreter','latex');
+        else
+            xlabel(ax,'','Interpreter','latex');   % no auto variable name
+        end
+
+        ax.XLabel.FontSize = figSettings.LabelFontSize;
+
+        ylabel(ax,'Counts','Interpreter','latex');
+        ax.YLabel.FontSize = figSettings.LabelFontSize;
+    end
+end
+
+%-------------------------------------------------------------------------%
+
+function plotBoxplotGrid(plotGrid,tbl,yVars,labels,plotOpts,figSettings)
+%BOXPLOTGRID  Boxplot comparison (one axes) + jittered scatter.
+%   Intended mainly for CONTROL_deltaL and CONTROL_thirdLineDeltaL.
+
+    if isstring(yVars)
+        yVars = cellstr(yVars);
+    elseif ischar(yVars)
+        yVars = {yVars};
+    end
+    nY = numel(yVars);
+
+    delete(plotGrid.Children);
+    plotGrid.RowHeight   = {'1x'};
+    plotGrid.ColumnWidth = {'1x'};
+
+    ax = uiaxes(plotGrid);
+    ax.Layout.Row    = 1;
+    ax.Layout.Column = 1;
+    ax.FontName      = figSettings.FontName;
+    ax.FontSize      = figSettings.TickFontSize;
+    box(ax,'on');
+
+    if plotOpts.ShowGrid
+        grid(ax,'on');
+    else
+        grid(ax,'off');
+    end
+
+    if nY == 0
+        title(ax,'No variables selected for boxplot','Interpreter','latex');
+        return;
+    end
+
+    % Collect data and group indices
+    allData = [];
+    grpIdx  = [];
+    for k = 1:nY
+        y = tbl.(yVars{k});
+        y = y(~isnan(y));
+        allData = [allData; y(:)];
+        grpIdx  = [grpIdx; k*ones(numel(y),1)];
+    end
+
+    groupCat = categorical(grpIdx,1:nY,yVars);
+
+    % Boxplot
+    boxchart(ax,groupCat,allData);
+    ax.XTickLabelRotation = 0;
+
+    % Jittered scatter (red crosses, like example)
+    hold(ax,'on');
+    for k = 1:nY
+        y = tbl.(yVars{k});
+        y = y(~isnan(y));
+        xj = k + (rand(size(y))-0.5)*0.15;
+        scatter(ax,xj,y,6,'r','x','MarkerEdgeAlpha',0.4);
+    end
+    hold(ax,'off');
+
+    % Labels
+    if ~isempty(strtrim(labels.Title))
+        title(ax,labels.Title,'Interpreter','latex');
+        ax.Title.FontSize = figSettings.TitleFontSize;
+    else
+        title(ax,'','Interpreter','latex');
+    end
+
+    if ~isempty(strtrim(labels.XLabel))
+        xlabel(ax,'','Interpreter','latex');
+    end
+    ax.XLabel.FontSize = figSettings.LabelFontSize;
+
+    if ~isempty(strtrim(labels.YLabel))
+        ylabel(ax,labels.YLabel,'Interpreter','latex');
+    else
+        ylabel(ax,'Value','Interpreter','latex');
+    end
+    ax.YLabel.FontSize = figSettings.LabelFontSize;
+
+    legend(ax,'off');
+end
+
+%-------------------------------------------------------------------------%
 
 function plotSingleAxes(ax,tbl,xVar,yVars,labels,plotOpts,figSettings)
+%PLOTSINGLEAXES  Low-level time-series plotting on one axes.
 
     x = tbl.(xVar);
 
@@ -692,15 +1080,14 @@ function plotSingleAxes(ax,tbl,xVar,yVars,labels,plotOpts,figSettings)
         y = tbl.(yVars{k});
         switch figSettings.PlotStyle
             case 'linemarker'
-                plt = plot(ax,x,y,'DisplayName',yVars{k});
-                plt.Marker    = '.';
-                plt.LineWidth = 1.2;
+                p = plot(ax,x,y,'DisplayName',yVars{k});
+                p.Marker    = '.';
+                p.LineWidth = 1.2;
             case 'scatter'
-                scatter(ax,x,y,'DisplayName',yVars{k}, ...
-                    'Marker','.');
+                scatter(ax,x,y,6,'DisplayName',yVars{k},'Marker','.');
             otherwise % 'line'
-                plt = plot(ax,x,y,'DisplayName',yVars{k});
-                plt.LineWidth = 1.2;
+                p = plot(ax,x,y,'DisplayName',yVars{k});
+                p.LineWidth = 1.2;
         end
     end
     hold(ax,'off');
@@ -720,11 +1107,11 @@ function plotSingleAxes(ax,tbl,xVar,yVars,labels,plotOpts,figSettings)
         legend(ax,'off');
     end
 
-    if ~isempty(strtrim(labels.Title))
-        title(ax,labels.Title,'Interpreter','latex');
-        ax.Title.FontSize = figSettings.TitleFontSize;
+    % X label: only if the user provided one; otherwise blank
+    if ~isempty(strtrim(labels.XLabel))
+        xlabel(ax,labels.XLabel,'Interpreter','latex');
     else
-        title(ax,'','Interpreter','latex');
+        xlabel(ax,'','Interpreter','latex');
     end
 
     if ~isempty(strtrim(labels.XLabel))
@@ -738,7 +1125,7 @@ function plotSingleAxes(ax,tbl,xVar,yVars,labels,plotOpts,figSettings)
         ylabel(ax,labels.YLabel,'Interpreter','latex');
     else
         if numel(yVars) == 1
-            ylabel(ax,yVars{1},'Interpreter','latex');   % single variable
+            ylabel(ax,yVars{1},'Interpreter','latex');
         else
             ylabel(ax,'Signals','Interpreter','latex');
         end
@@ -810,9 +1197,9 @@ function [titleStr,xLabelStr,yLabelStr] = defaultLabels(meta,xVar,yVars)
     if isfield(meta,'timeSecondsName') && strcmp(xVar,meta.timeSecondsName)
         xLabelStr = 'Time $t$ [s]';
     elseif isfield(meta,'timeStampName') && strcmp(xVar,meta.timeStampName)
-        xLabelStr = 'Time stamp';
+        xLabelStr = 'Time $t$ [s]';
     else
-        xLabelStr = xVar;
+        xLabelStr = '';
     end
 
     if isstring(yVars); yVars = cellstr(yVars); end

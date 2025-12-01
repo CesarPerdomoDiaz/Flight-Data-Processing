@@ -1,18 +1,28 @@
-function kiteLogApp_v4
-%KITELOGAPP_V4 UC3M AWE kite log plotting app with histograms & boxplots.
+function kiteLogApp_v5
+%KITELOGAPP_V5  UC3M AWE kite log plotting app with histograms & boxplots.
+%
+% Now supports:
+%   - Full control of X/Y labels for all plot types (time series, histogram, boxplot)
+%   - Multiple CSV logs loaded at once (multi-kite analysis)
+%   - Cropping by X-range (e.g. only analyze portion where kite is flying)
+%   - Extra analysis windows: Wind, Control, Actuators
 
     % Shared state (captured by nested functions)
-    dataTable = table();
-    meta      = struct();
-    ui        = struct();
-    Fs        = 40;
+    dataTable  = table();    % primary dataset (first loaded log)
+    meta       = struct();   % metadata for primary dataset
+
+    dataTables = {};         % NEW: cell array of all loaded tables (multi-kite)
+    logNames   = {};
+
+    ui         = struct();   % UI handles
+
+    Fs         = 40;         % Hz, sampling freq used in analysis windows
 
     createComponents();
 
     %==================================================================%
     %                         NESTED UI SETUP                          %
     %==================================================================%
-
     function createComponents()
         % Main figure
         ui.fig = uifigure( ...
@@ -20,19 +30,22 @@ function kiteLogApp_v4
             'Position',[100 100 1200 700], ...
             'Color',[1 1 1]);
 
-           %------------- TOP MENUS (NEW) -------------%
-        ui.menuAnalisis   = uimenu(ui.fig,'Text','Análisis');
-        ui.menuWind       = uimenu(ui.menuAnalisis, ...
-            'Text','Análisis de viento', ...
-            'MenuSelectedFcn',@onMenuWindSelected);
-        ui.menuControl    = uimenu(ui.menuAnalisis, ...
-            'Text','Análisis de control', ...
-            'MenuSelectedFcn',@onMenuControlSelected);
-        ui.menuActuadores = uimenu(ui.menuAnalisis, ...
-            'Text','Análisis actuadores', ...
-            'MenuSelectedFcn',@onMenuActuadoresSelected);
-        %-------------------------------------------%
+        %---------------- Top menu: Analysis (Wind / Control / Actuators) ---%
+        ui.menuAnalysis = uimenu(ui.fig, 'Text','Análisis');
 
+        ui.menuWind = uimenu(ui.menuAnalysis, ...
+            'Text','Análisis de viento', ...
+            'MenuSelectedFcn', @onMenuWindSelected);
+
+        ui.menuControl = uimenu(ui.menuAnalysis, ...
+            'Text','Análisis de control', ...
+            'MenuSelectedFcn', @onMenuControlSelected);
+
+        ui.menuActuadores = uimenu(ui.menuAnalysis, ...
+            'Text','Análisis actuadores', ...
+            'MenuSelectedFcn', @onMenuActuadoresSelected);
+
+        %---------------- Root layout ----------------%
         mainGrid = uigridlayout(ui.fig,[3 1]);
         mainGrid.RowHeight   = {80,'1x',22};
         mainGrid.ColumnWidth = {'1x'};
@@ -78,14 +91,14 @@ function kiteLogApp_v4
         ui.tabFigure = uitab(ui.tabGroup,'Title','Figure');
 
         %---------------- PLOT TAB ----------------%
-        % 11 rows: load, file, plot type, X, Y, layout, grid/legend, buttons
-        plotGrid = uigridlayout(ui.tabPlot,[11 2]);
-        plotGrid.RowHeight   = {30,30,20,30,20,30,20,'1x',30,30,30};
+        % 12 rows: load, file, plot type, X, Y, layout, X-range, grid/legend, buttons
+        plotGrid = uigridlayout(ui.tabPlot,[12 2]);
+        plotGrid.RowHeight   = {30,30,20,30,20,30,20,'1x',30,20,30,30};
         plotGrid.ColumnWidth = {110,'1x'};
 
-        % 1) Load button
+        % 1) Load button (multi-CSV)
         ui.loadButton = uibutton(plotGrid, ...
-            'Text','Load CSV log...', ...
+            'Text','Load CSV log(s)...', ...
             'ButtonPushedFcn',@onLoadLog);
         ui.loadButton.Layout.Row    = 1;
         ui.loadButton.Layout.Column = [1 2];
@@ -154,49 +167,49 @@ function kiteLogApp_v4
         ui.layoutDropDown.Layout.Row    = 9;
         ui.layoutDropDown.Layout.Column = 2;
 
-        % 7) Grid / legend
+        % 7) NEW: X-range (cropping)
+        ui.xRangeLbl = uilabel(plotGrid, ...
+            'Text','X range (min max):', ...
+            'HorizontalAlignment','right');
+        ui.xRangeLbl.Layout.Row    = 10;
+        ui.xRangeLbl.Layout.Column = 1;
+
+        ui.xRangeEdit = uieditfield(plotGrid,'text', ...
+            'Value','', ...
+            'Placeholder','leave empty for full range, e.g. 120 450');
+        ui.xRangeEdit.Layout.Row    = 10;
+        ui.xRangeEdit.Layout.Column = 2;
+
+        % 8) Grid / legend
         ui.gridCheck = uicheckbox(plotGrid, ...
             'Text','Show grid', ...
             'Value',true);
-        ui.gridCheck.Layout.Row    = 10;
+        ui.gridCheck.Layout.Row    = 11;
         ui.gridCheck.Layout.Column = 1;
 
         ui.legendCheck = uicheckbox(plotGrid, ...
             'Text','Show legend', ...
             'Value',true);
-        ui.legendCheck.Layout.Row    = 10;
+        ui.legendCheck.Layout.Row    = 11;
         ui.legendCheck.Layout.Column = 2;
 
-        % 8) Plot & export
+        % 9) Plot & export
         ui.plotButton = uibutton(plotGrid, ...
             'Text','Plot', ...
             'ButtonPushedFcn',@onPlotPressed);
-        ui.plotButton.Layout.Row    = 11;
+        ui.plotButton.Layout.Row    = 12;
         ui.plotButton.Layout.Column = 1;
 
-        % Export format selector
-        ui.exportFormatLbl = uilabel(plotGrid, ...
-            'Text','Export format:', ...
-            'HorizontalAlignment','right');
-        ui.exportFormatLbl.Layout.Row    = 12;
-        ui.exportFormatLbl.Layout.Column = 1;
-
-        ui.exportFormatDropDown = uidropdown(plotGrid, ...
-            'Items',{'PNG','PDF','SVG'}, ...
-            'Value','PNG');
-        ui.exportFormatDropDown.Layout.Row    = 12;
-        ui.exportFormatDropDown.Layout.Column = 2;
-
         ui.exportButton = uibutton(plotGrid, ...
-            'Text','Export...', ...
+            'Text','Export PNG...', ...
             'ButtonPushedFcn',@onExportPressed, ...
             'Enable','off');
-        ui.exportButton.Layout.Row    = 13;
-        ui.exportButton.Layout.Column = [1 2];
+        ui.exportButton.Layout.Row    = 12;
+        ui.exportButton.Layout.Column = 2;
 
         %---------------- FIGURE TAB ----------------%
-        figGrid = uigridlayout(ui.tabFigure,[12 2]);
-        figGrid.RowHeight   = {20,30,20,30,20,30,30,30,30,30,30,30};
+        figGrid = uigridlayout(ui.tabFigure,[13 2]);
+        figGrid.RowHeight   = {20,30,20,30,20,30,30,30,30,30,30,30,30};
         figGrid.ColumnWidth = {130,'1x'};
 
         ui.titleLbl = uilabel(figGrid, ...
@@ -224,7 +237,7 @@ function kiteLogApp_v4
         ui.xAxisEdit.Layout.Column = 2;
 
         ui.yAxisLbl = uilabel(figGrid, ...
-            'Text','Y label (single axes / boxplot):', ...
+            'Text','Y label (all plots):', ...
             'HorizontalAlignment','right');
         ui.yAxisLbl.Layout.Row    = 5;
         ui.yAxisLbl.Layout.Column = 1;
@@ -283,29 +296,43 @@ function kiteLogApp_v4
         ui.legendSizeSpinner.Layout.Row    = 10;
         ui.legendSizeSpinner.Layout.Column = 2;
 
+        % NEW: custom legend labels
+        ui.legendLabelsLbl = uilabel(figGrid, ...
+            'Text','Legend labels (comma-separated):', ...
+            'HorizontalAlignment','right');
+        ui.legendLabelsLbl.Layout.Row    = 11;
+        ui.legendLabelsLbl.Layout.Column = 1;
+
+        ui.legendLabelsEdit = uieditfield(figGrid,'text', ...
+            'Value','', ...
+            'Placeholder','e.g. Kite A, Kite B, Kite C');
+        ui.legendLabelsEdit.Layout.Row    = 11;
+        ui.legendLabelsEdit.Layout.Column = 2;
+
         ui.colorLbl = uilabel(figGrid, ...
             'Text','Color scheme:', ...
             'HorizontalAlignment','right');
-        ui.colorLbl.Layout.Row    = 11;
+        ui.colorLbl.Layout.Row    = 12;
         ui.colorLbl.Layout.Column = 1;
 
         ui.colorDropDown = uidropdown(figGrid, ...
             'Items',{'Default','Lines','Parula','Turbo','Gray'}, ...
             'Value','Default');
-        ui.colorDropDown.Layout.Row    = 11;
+        ui.colorDropDown.Layout.Row    = 12;
         ui.colorDropDown.Layout.Column = 2;
 
         ui.plotStyleLbl = uilabel(figGrid, ...
             'Text','Plot style (time series):', ...
             'HorizontalAlignment','right');
-        ui.plotStyleLbl.Layout.Row    = 12;
+        ui.plotStyleLbl.Layout.Row    = 13;
         ui.plotStyleLbl.Layout.Column = 1;
 
         ui.plotStyleDropDown = uidropdown(figGrid, ...
             'Items',{'Line','Line with markers','Scatter'}, ...
             'Value','Line');
-        ui.plotStyleDropDown.Layout.Row    = 12;
+        ui.plotStyleDropDown.Layout.Row    = 13;
         ui.plotStyleDropDown.Layout.Column = 2;
+
 
         %---------------- Plot panel on the right ----------------%
         ui.plotPanel = uipanel(bodyGrid);
@@ -329,7 +356,7 @@ function kiteLogApp_v4
 
         % Status bar
         ui.statusLabel = uilabel(mainGrid, ...
-            'Text','Ready. Load a CSV log to start.', ...
+            'Text','Ready. Load one or more CSV logs to start.', ...
             'HorizontalAlignment','left');
         ui.statusLabel.Layout.Row    = 3;
         ui.statusLabel.Layout.Column = 1;
@@ -371,7 +398,7 @@ function kiteLogApp_v4
                     list = string([]);
                 end
             case 'histogram'
-                % For histogram we only care about tether tension channels
+                % Histogram: tension distribution (LC variables)
                 if isfield(meta,'tensionVars') && ~isempty(meta.tensionVars)
                     list = string(meta.tensionVars);
                 else
@@ -438,22 +465,51 @@ function kiteLogApp_v4
         updateYVarListForPlotKind(kind);
     end
 
-    function onLoadLog(~,~)
-        [fileName,pathName] = uigetfile('*.csv','Select kite log CSV file');
+ function onLoadLog(~,~)
+        [fileName,pathName] = uigetfile('*.csv', ...
+            'Select kite log CSV file(s)','MultiSelect','on');
         if isequal(fileName,0)
             return;
         end
-        fullName = fullfile(pathName,fileName);
 
-        try
-            [dataTable, meta] = readKiteLog(fullName);
-        catch ME
-            uialert(ui.fig, ...
-                sprintf('Error reading log file:\n\n%s',ME.message), ...
-                'Read error');
-            return;
+        % Normalize to cell array of filenames
+        if ischar(fileName)
+            fileNames = {fileName};
+        else
+            fileNames = fileName;
         end
 
+        nFiles    = numel(fileNames);
+        dataTables = cell(1,nFiles);
+        logNames   = cell(1,nFiles);   % <--- NEW
+
+        % Read each CSV log
+        for k = 1:nFiles
+            fullName = fullfile(pathName,fileNames{k});
+            try
+                [tbl, mt] = readKiteLog(fullName);
+            catch ME
+                uialert(ui.fig, ...
+                    sprintf('Error reading log file "%s":\n\n%s', ...
+                    fileNames{k}, ME.message), ...
+                    'Read error');
+                return;
+            end
+
+            dataTables{k} = tbl;
+
+            % Store base file name for legends
+            [~,baseName,ext] = fileparts(fileNames{k});
+            logNames{k} = [baseName ext];
+
+            % Primary dataset = first log
+            if k == 1
+                dataTable = tbl;
+                meta      = mt;
+            end
+        end
+
+        % From here on, use dataTable/meta (first log) as before
         varNames = string(dataTable.Properties.VariableNames);
 
         % X candidates
@@ -492,10 +548,19 @@ function kiteLogApp_v4
         ui.xAxisEdit.Value = defaultXLabel;
         ui.yAxisEdit.Value = defaultYLabel;
 
-        ui.fileLabel.Text   = sprintf('File: %s',fileName);
-        ui.statusLabel.Text = sprintf('Loaded %s (%d samples, %d variables).', ...
-            fileName,height(dataTable),width(dataTable));
+        % File label and status text
+        if nFiles == 1
+            ui.fileLabel.Text = sprintf('File: %s',fileNames{1});
+            ui.statusLabel.Text = sprintf('Loaded %s (%d samples, %d variables).', ...
+                fileNames{1},height(dataTable),width(dataTable));
+        else
+            ui.fileLabel.Text = sprintf('Files: %s (+%d more)', ...
+                fileNames{1}, nFiles-1);
+            ui.statusLabel.Text = sprintf('Loaded %d log file(s). First: %s (%d samples, %d variables).', ...
+                nFiles, fileNames{1}, height(dataTable), width(dataTable));
+        end
 
+        % Reset main plot area
         delete(ui.plotGrid.Children);
         ax = uiaxes(ui.plotGrid);
         ax.Layout.Row    = 1;
@@ -508,7 +573,8 @@ function kiteLogApp_v4
         title(ax,'Press "Plot" to visualize data','Interpreter','latex');
 
         ui.exportButton.Enable = 'off';
-    %------------ NEW: refresh analysis windows ------------%
+
+        % Refresh analysis windows if already open (they use dataTable = first log)
         if isfield(ui,'windFig') && ~isempty(ui.windFig) && isvalid(ui.windFig)
             plotWindAnalysis();
         end
@@ -518,8 +584,8 @@ function kiteLogApp_v4
         if isfield(ui,'actFig') && ~isempty(ui.actFig) && isvalid(ui.actFig)
             plotActuatorsAnalysis();
         end
-        %--------------------------------------------------------%
     end
+
 
     function onXVarChanged(~,~)
         if isempty(dataTable)
@@ -553,17 +619,23 @@ function kiteLogApp_v4
     end
 
     function onPlotPressed(~,~)
-        if isempty(dataTable)
-            uialert(ui.fig,'Please load a CSV log first.','No data');
-            return;
+        % Use all loaded tables (multi-kite)
+        if isempty(dataTables)
+            if isempty(dataTable)
+                uialert(ui.fig,'Please load one or more CSV logs first.','No data');
+                return;
+            else
+                dataTables = {dataTable}; %#ok<NASGU>
+            end
         end
 
         xVar  = ui.xVarDropDown.Value;
         yVars = ui.yVarList.Value;
+        kind  = ui.plotKindDropDown.Value;
 
         % For histogram we ignore Y selection and use fixed tether channels,
         % but we still require at least one Y variable for other plots.
-        if isempty(yVars) && ~strcmp(ui.plotKindDropDown.Value,'histogram')
+        if isempty(yVars) && ~strcmp(kind,'histogram')
             uialert(ui.fig,'Select at least one Y variable to plot.','No Y variable');
             return;
         end
@@ -574,52 +646,61 @@ function kiteLogApp_v4
 
         plotOpts.ShowGrid   = logical(ui.gridCheck.Value);
         plotOpts.ShowLegend = logical(ui.legendCheck.Value);
-        plotOpts.Layout     = ui.layoutDropDown.Value;           % 'single' / 'stacked'
-        plotOpts.PlotKind   = ui.plotKindDropDown.Value;         % 'timeseries' / 'histogram' / 'boxplot'
+        plotOpts.Layout     = ui.layoutDropDown.Value;    % 'single' / 'stacked'
+        plotOpts.PlotKind   = kind;                       % 'timeseries' / 'histogram' / 'boxplot'
+
+        % NEW: X-range (cropping)
+        rawRange = strtrim(ui.xRangeEdit.Value);
+        plotOpts.XRange = [];
+        if ~isempty(rawRange)
+            nums = sscanf(rawRange,'%f');
+            if numel(nums) >= 2
+                xr = double(nums(1:2).');
+                if xr(2) < xr(1)
+                    xr = fliplr(xr);
+                end
+                plotOpts.XRange = xr;
+            end
+        end
 
         figSettings = getFigureSettings();
 
-        plotLogData(ui.plotGrid,dataTable,xVar,yVars,labels,plotOpts,figSettings);
+        plotLogData(ui.plotGrid,dataTables,xVar,yVars,labels,plotOpts,figSettings);
 
-        ui.statusLabel.Text = sprintf('%s plot of %d variable(s).', ...
-            upper(plotOpts.PlotKind(1)), max(1,numel(yVars)));
+        ui.statusLabel.Text = sprintf('%s plot of %d variable(s) for %d log(s).', ...
+            upper(kind(1)), max(1,numel(yVars)), numel(dataTables));
         ui.exportButton.Enable = 'on';
     end
 
     function onExportPressed(~,~)
-        if isempty(dataTable)
+        if isempty(dataTables) && isempty(dataTable)
             uialert(ui.fig,'Nothing to export. Load data and create a plot first.','No data');
             return;
         end
 
-        [fileName,pathName] = uiputfile({'*.png;*.pdf;*.svg','Export as PNG, PDF, or SVG'}, 'Export plot');
+        [fileName,pathName] = uiputfile('*.png','Export plot as PNG');
         if isequal(fileName,0)
             return;
         end
         fullName = fullfile(pathName,fileName);
 
-        [~,~,ext] = fileparts(fullName);
-        validExtensions = {'.png', '.pdf', '.svg'};
-        if ~ismember(ext, validExtensions)
-            uialert(ui.fig, 'Please select a valid file format (PNG, PDF, or SVG).', 'Invalid format');
-            return;
-        end
-
         try
-            exportgraphics(ui.plotPanel, fullName, ...
-                'Resolution', 300, ...
-                'BackgroundColor', 'white');
+            exportgraphics(ui.plotPanel,fullName, ...
+                'Resolution',300, ...
+                'BackgroundColor','white');
         catch ME
             uialert(ui.fig, ...
-                sprintf('Error exporting file:\n\n%s', ME.message), ...
+                sprintf('Error exporting PNG:\n\n%s',ME.message), ...
                 'Export error');
             return;
         end
 
-        ui.statusLabel.Text = sprintf('Exported plot panel to %s.', fullName);
+        ui.statusLabel.Text = sprintf('Exported plot panel to %s.',fullName);
     end
 
-    %==================== MENU CALLBACKS (NEW) ====================%
+    %==================================================================%
+    %                    ANALYSIS MENU CALLBACKS (NEW)                 %
+    %==================================================================%
 
     function onMenuWindSelected(~,~)
         openWindAnalysisWindow();
@@ -636,14 +717,8 @@ function kiteLogApp_v4
         plotActuatorsAnalysis();
     end
 
-    function onActShowTotalChanged(~,~)
-        % Checkbox in actuators window
-        plotActuatorsAnalysis();
-    end
-%================= VENTANA: ANÁLISIS DE VIENTO (NEW) =================%
-
+    %================= Ventana de Análisis de Viento ===================%
     function openWindAnalysisWindow()
-        % If already open, bring to front
         if isfield(ui,'windFig') && ~isempty(ui.windFig) && isvalid(ui.windFig)
             figure(ui.windFig);
             return;
@@ -655,14 +730,16 @@ function kiteLogApp_v4
         % Serie temporal (arriba)
         ui.windTimeAx = uiaxes(ui.windFig, 'Position', [50 360 1000 250]);
         title(ui.windTimeAx, 'Wind Speed vs Tiempo');
-        xlabel(ui.windTimeAx, 'Tiempo');
+        xlabel(ui.windTimeAx, 'Tiempo (s)');
         ylabel(ui.windTimeAx, 'WIND\_speed');
+        grid(ui.windTimeAx,'on');
 
         % Histograma (abajo izq)
         ui.windHistAx = uiaxes(ui.windFig, 'Position', [50 50 480 260]);
         title(ui.windHistAx, 'Distribución de WIND\_speed');
-        xlabel(ui.windHistAx, 'WIND\_speed');
+        xlabel(ui.windHistAx, 'WIND\_speed'); 
         ylabel(ui.windHistAx, 'Cuenta');
+        grid(ui.windHistAx,'on');
 
         % Polar (abajo dcha)
         ui.windPolarAx = polaraxes('Parent', ui.windFig);
@@ -682,28 +759,29 @@ function kiteLogApp_v4
         end
 
         if isempty(dataTable) || height(dataTable)==0
-            cla(ui.windTimeAx); cla(ui.windHistAx); cla(ui.windPolarAx);
-            title(ui.windTimeAx,'Sin datos'); title(ui.windHistAx,''); title(ui.windPolarAx,'');
+            uialert(ui.windFig, 'No hay datos cargados. Carga un log CSV primero.', 'Sin datos');
             return;
         end
 
         names = dataTable.Properties.VariableNames;
         if ~ismember('WIND_speed',names) || ~ismember('WIND_direction',names)
-            uialert(ui.windFig, ...
-                'Faltan columnas WIND\_speed o WIND\_direction en los datos.', ...
-                'Datos insuficientes');
+            uialert(ui.windFig, 'Faltan columnas WIND\_speed o WIND\_direction en los datos.', 'Datos insuficientes');
             return;
         end
 
         ws = dataTable.WIND_speed(:);
         wd = dataTable.WIND_direction(:);
         good = isfinite(ws) & isfinite(wd);
-        ws = ws(good);
+        ws = ws(good); 
         wd = wd(good);
 
         if isempty(ws)
-            cla(ui.windTimeAx); cla(ui.windHistAx); cla(ui.windPolarAx);
-            title(ui.windTimeAx,'Sin datos válidos'); title(ui.windHistAx,''); title(ui.windPolarAx,'');
+            cla(ui.windTimeAx); 
+            cla(ui.windHistAx); 
+            cla(ui.windPolarAx);
+            title(ui.windTimeAx,'Sin datos válidos'); 
+            title(ui.windHistAx,''); 
+            title(ui.windPolarAx,'');
             return;
         end
 
@@ -719,11 +797,12 @@ function kiteLogApp_v4
         cla(ui.windHistAx);
         histogram(ui.windHistAx, ws, 'BinMethod','fd');
         grid(ui.windHistAx,'on');
-        xlabel(ui.windHistAx, 'WIND\_speed');
+        xlabel(ui.windHistAx, 'WIND\_speed'); 
         ylabel(ui.windHistAx, 'Cuenta');
 
         % 3) Polar (scatter por rangos)
-        cla(ui.windPolarAx); hold(ui.windPolarAx,'on');
+        cla(ui.windPolarAx); 
+        hold(ui.windPolarAx,'on');
         theta = deg2rad(wd);
         mask1 = ws <= 5;
         mask2 = ws > 5  & ws <= 10;
@@ -747,14 +826,14 @@ function kiteLogApp_v4
                 'MarkerFaceColor',[1 0 0], 'MarkerEdgeColor','k', 'DisplayName','>15');
         end
 
-        thetalim(ui.windPolarAx, [0 360]);
+        thetalim(ui.windPolarAx, [0 360]); 
         rtick(ui.windPolarAx, 'auto');
         grid(ui.windPolarAx,'on');
         legend(ui.windPolarAx, 'Location','northeastoutside', 'Title','Wind Speed (m/s)');
         hold(ui.windPolarAx,'off');
     end
-    %================= VENTANA: ANÁLISIS DE CONTROL (NEW) ================%
 
+    %================= Ventana de Análisis de Control ==================%
     function openControlAnalysisWindow()
         if isfield(ui,'controlFig') && ~isempty(ui.controlFig) && isvalid(ui.controlFig)
             figure(ui.controlFig);
@@ -767,15 +846,15 @@ function kiteLogApp_v4
         % Scatter phi (x) vs beta (y) arriba
         ui.controlScatterAx = uiaxes(ui.controlFig, 'Position', [60 400 880 250]);
         title(ui.controlScatterAx, '\phi vs \beta (scatter)');
-        xlabel(ui.controlScatterAx, '\phi');
-        ylabel(ui.controlScatterAx, '\beta');
+        xlabel(ui.controlScatterAx, '\phi'); 
+        ylabel(ui.controlScatterAx, '\beta'); 
         grid(ui.controlScatterAx,'on');
 
         % Serie psi vs psi_set abajo
         ui.controlPsiAx = uiaxes(ui.controlFig, 'Position', [60 80 880 250]);
         title(ui.controlPsiAx, '\psi y \psi_{set} vs tiempo');
-        xlabel(ui.controlPsiAx, 'Tiempo (s)');
-        ylabel(ui.controlPsiAx, '\psi');
+        xlabel(ui.controlPsiAx, 'Tiempo (s)'); 
+        ylabel(ui.controlPsiAx, '\psi'); 
         grid(ui.controlPsiAx,'on');
         legend(ui.controlPsiAx,'off');
     end
@@ -786,16 +865,15 @@ function kiteLogApp_v4
         end
 
         if isempty(dataTable) || height(dataTable)==0
-            cla(ui.controlScatterAx); cla(ui.controlPsiAx);
-            title(ui.controlScatterAx,'Sin datos'); title(ui.controlPsiAx,'Sin datos');
+            uialert(ui.controlFig, 'No hay datos cargados. Carga un log CSV primero.', 'Sin datos');
             return;
         end
 
         names = dataTable.Properties.VariableNames;
-        havePhi  = ismember('CONTROL_phi',names);
-        haveBeta = ismember('CONTROL_beta',names);
-        havePsi  = ismember('CONTROL_psi',names);
-        havePsiS = ismember('CONTROL_psi_set',names);
+        havePhi  = ismember('CONTROL_phi', names);
+        haveBeta = ismember('CONTROL_beta', names);
+        havePsi  = ismember('CONTROL_psi', names);
+        havePsiS = ismember('CONTROL_psi_set', names);
 
         % --- Scatter phi vs beta ---
         cla(ui.controlScatterAx);
@@ -803,7 +881,7 @@ function kiteLogApp_v4
             phi  = dataTable.CONTROL_phi(:);
             beta = dataTable.CONTROL_beta(:);
             good = isfinite(phi) & isfinite(beta);
-            phi  = phi(good);
+            phi  = phi(good); 
             beta = beta(good);
             if ~isempty(phi)
                 scatter(ui.controlScatterAx, phi, beta, 10, 'filled');
@@ -824,18 +902,18 @@ function kiteLogApp_v4
             psiSet = dataTable.CONTROL_psi_set(:);
 
             n = min(numel(psi), numel(psiSet));
-            psi    = psi(1:n);
+            psi    = psi(1:n); 
             psiSet = psiSet(1:n);
 
             t = (0:n-1)'/Fs;
             good = isfinite(t) & isfinite(psi) & isfinite(psiSet);
-            t     = t(good);
-            psi   = psi(good);
-            psiSet= psiSet(good);
+            t = t(good); 
+            psi = psi(good); 
+            psiSet = psiSet(good);
 
             if ~isempty(t)
                 hold(ui.controlPsiAx,'on');
-                plot(ui.controlPsiAx, t, psi,    '-', 'LineWidth', 1.1, 'DisplayName','\psi');
+                plot(ui.controlPsiAx, t, psi, '-', 'LineWidth', 1.1, 'DisplayName','\psi');
                 plot(ui.controlPsiAx, t, psiSet, '-', 'LineWidth', 1.1, 'DisplayName','\psi_{set}');
                 hold(ui.controlPsiAx,'off');
                 legend(ui.controlPsiAx,'Location','best');
@@ -849,20 +927,19 @@ function kiteLogApp_v4
                 'HorizontalAlignment','center','Units','normalized');
             legend(ui.controlPsiAx,'off');
         end
-
         xlabel(ui.controlPsiAx, sprintf('Tiempo (s) — Fs=%.3g Hz', Fs));
         ylabel(ui.controlPsiAx, '\psi');
         grid(ui.controlPsiAx,'on');
     end
-    %================= VENTANA: ANÁLISIS ACTUADORES (NEW) ================%
 
+    %================= Ventana de Análisis Actuadores =================%
     function openActuatorsAnalysisWindow()
         if isfield(ui,'actFig') && ~isempty(ui.actFig) && isvalid(ui.actFig)
             figure(ui.actFig);
             return;
         end
 
-        % Ventana más ancha para dar más espacio a la tabla derecha
+        % Ventana ancha para dejar espacio a la tabla
         ui.actFig = uifigure('Name','Análisis actuadores', ...
                              'Position',[220 100 1200 720]);
 
@@ -871,19 +948,19 @@ function kiteLogApp_v4
             'Text','Mostrar potencia total (P10+P20+P21+P30)', ...
             'Value', false, ...
             'Position', [40 685 400 22], ...
-            'ValueChangedFcn',@onActShowTotalChanged);
+            'ValueChangedFcn', @onActShowTotalChanged);
 
         % Eje superior: Potencia de los 4 actuadores
         ui.actAxes = uiaxes(ui.actFig, 'Position', [40 380 820 290]);
         title(ui.actAxes, 'Potencia actuadores (W)');
-        xlabel(ui.actAxes, 'Tiempo (s)');
+        xlabel(ui.actAxes, 'Tiempo (s)'); 
         ylabel(ui.actAxes, 'Potencia (W)');
         grid(ui.actAxes, 'on');
 
         % Eje inferior: Energía acumulada
         ui.actEnergyAx = uiaxes(ui.actFig, 'Position', [40 80 820 260]);
         title(ui.actEnergyAx, 'Energía consumida por los actuadores (Wh)');
-        xlabel(ui.actEnergyAx, 'Tiempo (s)');
+        xlabel(ui.actEnergyAx, 'Tiempo (s)'); 
         ylabel(ui.actEnergyAx, 'Energía (Wh)');
         grid(ui.actEnergyAx, 'on');
 
@@ -897,38 +974,36 @@ function kiteLogApp_v4
         ui.actStatsTable.ColumnFormat = {'char','char','char','char'};
     end
 
+    function onActShowTotalChanged(~,~)
+        plotActuatorsAnalysis();
+    end
+
     function plotActuatorsAnalysis()
         if ~isfield(ui,'actFig') || isempty(ui.actFig) || ~isvalid(ui.actFig)
             return;
         end
 
-        cla(ui.actAxes); cla(ui.actEnergyAx);
-        if isfield(ui,'actStatsTable') && ~isempty(ui.actStatsTable) && isvalid(ui.actStatsTable)
-            ui.actStatsTable.Data = cell(0,4);
-        end
+        cla(ui.actAxes); 
+        cla(ui.actEnergyAx);
+        ui.actStatsTable.Data = cell(0,4);
 
         if isempty(dataTable) || height(dataTable)==0
-            text(ui.actAxes,0.5,0.5,'Sin datos', ...
-                'HorizontalAlignment','center','Units','normalized');
-            text(ui.actEnergyAx,0.5,0.5,'Sin datos', ...
-                'HorizontalAlignment','center','Units','normalized');
+            text(ui.actAxes,0.5,0.5,'No hay datos cargados','HorizontalAlignment','center','Units','normalized');
+            text(ui.actEnergyAx,0.5,0.5,'Sin datos','HorizontalAlignment','center','Units','normalized');
             return;
         end
 
         names = dataTable.Properties.VariableNames;
-        need  = {'DPRO_10_current','DPRO_20_current','DPRO_21_current', ...
-                 'DPRO_30_current','DPRO_voltage_48'};
-        hasAll = all(ismember(need,names));
+        need = {'DPRO_10_current','DPRO_20_current','DPRO_21_current','DPRO_30_current','DPRO_voltage_48'};
+        hasAll = all(ismember(need, names));
 
         if ~hasAll
-            text(ui.actAxes,0.5,0.5,'Faltan DPRO\_xx\_current o DPRO\_voltage\_48', ...
-                'HorizontalAlignment','center','Units','normalized');
-            text(ui.actEnergyAx,0.5,0.5,'Sin datos', ...
-                'HorizontalAlignment','center','Units','normalized');
+            text(ui.actAxes,0.5,0.5,'Faltan DPRO\_xx\_current o DPRO\_voltage\_48','HorizontalAlignment','center','Units','normalized');
+            text(ui.actEnergyAx,0.5,0.5,'Sin datos','HorizontalAlignment','center','Units','normalized');
             return;
         end
 
-        % Tomar datos
+        % Corrientes y tensión
         i10 = dataTable.DPRO_10_current(:);
         i20 = dataTable.DPRO_20_current(:);
         i21 = dataTable.DPRO_21_current(:);
@@ -937,32 +1012,34 @@ function kiteLogApp_v4
 
         % Igualar longitudes
         n = min([numel(i10), numel(i20), numel(i21), numel(i30), numel(v48)]);
-        i10 = i10(1:n); i20 = i20(1:n); i21 = i21(1:n); i30 = i30(1:n); v48 = v48(1:n);
+        i10 = i10(1:n); 
+        i20 = i20(1:n); 
+        i21 = i21(1:n); 
+        i30 = i30(1:n); 
+        v48 = v48(1:n);
 
-        % Potencias (W): P = I * V / 1e6  (misma escala y signo que LogViewerApp)
+        % Potencias (W)
         P10 = (i10 .* v48) / 1000000;
         P20 = (i20 .* v48) / 1000000;
-        P21 = -(i21 .* v48) / 1000000; % cambio de signo como en el otro app
+        P21 = -(i21 .* v48) / 1000000;  % mismo cambio de signo
         P30 = (i30 .* v48) / 1000000;
 
-        % Filtrar no-finitos en bloque
+        % Filtrado conjunto
         t = (0:n-1)'/Fs;
         good = isfinite(t) & isfinite(P10) & isfinite(P20) & isfinite(P21) & isfinite(P30);
-        t   = t(good);
-        P10 = P10(good);
-        P20 = P20(good);
-        P21 = P21(good);
+        t   = t(good); 
+        P10 = P10(good); 
+        P20 = P20(good); 
+        P21 = P21(good); 
         P30 = P30(good);
 
         if isempty(t)
-            text(ui.actAxes,0.5,0.5,'Sin datos válidos', ...
-                'HorizontalAlignment','center','Units','normalized');
-            text(ui.actEnergyAx,0.5,0.5,'Sin datos válidos', ...
-                'HorizontalAlignment','center','Units','normalized');
+            text(ui.actAxes,0.5,0.5,'Sin datos válidos','HorizontalAlignment','center','Units','normalized');
+            text(ui.actEnergyAx,0.5,0.5,'Sin datos válidos','HorizontalAlignment','center','Units','normalized');
             return;
         end
 
-        % -------- Plot superior: potencias individuales (+ opcional total) ----------
+        % -------- Plot superior: Potencias individuales + total opcional -----
         hold(ui.actAxes,'on');
         plot(ui.actAxes, t, P10, '-', 'LineWidth', 1.1, 'DisplayName','P10 (W)');
         plot(ui.actAxes, t, P20, '-', 'LineWidth', 1.1, 'DisplayName','P20 (W)');
@@ -970,64 +1047,104 @@ function kiteLogApp_v4
         plot(ui.actAxes, t, P30, '-', 'LineWidth', 1.1, 'DisplayName','P30 (W)');
 
         Psum = P10 + P20 + P21 + P30;
-        if isfield(ui,'actShowTotalCB') && ~isempty(ui.actShowTotalCB) && ...
-                isvalid(ui.actShowTotalCB) && ui.actShowTotalCB.Value
-            plot(ui.actAxes, t, Psum, '-', 'LineWidth', 1.8, 'Color',[0 0 0], ...
-                'DisplayName','P_{tot} (W)');
+        if isfield(ui,'actShowTotalCB') && ~isempty(ui.actShowTotalCB) && isvalid(ui.actShowTotalCB) ...
+                && logical(ui.actShowTotalCB.Value)
+            plot(ui.actAxes, t, Psum, '-', 'LineWidth', 1.8, 'Color',[0 0 0], 'DisplayName','P_{tot} (W)');
         end
         hold(ui.actAxes,'off');
         legend(ui.actAxes,'Location','best');
         xlabel(ui.actAxes, sprintf('Tiempo (s) — Fs=%.3g Hz', Fs));
         ylabel(ui.actAxes, 'Potencia (W)');
         grid(ui.actAxes,'on');
-
-        % Sin notación científica en Y (potencia)
         try, ytickformat(ui.actAxes,'%.0f'); end
         try, ui.actAxes.YRuler.Exponent = 0; end
 
-        % -------- Plot inferior: Energía acumulada de Psum (Wh) ----------
-        dt  = 1/Fs;
-        Ewh = cumsum(Psum) * dt / 3600;   % W*s / 3600 = Wh
+        % -------- Plot inferior: Energía acumulada (Wh) ----------------------
+        dt = 1/Fs;
+        Ewh = cumsum(Psum) * dt / 3600;   % W*s -> Wh
 
-        % Colorear por signo de Psum: rojo (>=0), verde (<0)
         Ewh_pos = Ewh; Ewh_pos(Psum < 0)  = NaN;
         Ewh_neg = Ewh; Ewh_neg(Psum >= 0) = NaN;
 
         hold(ui.actEnergyAx,'on');
-        plot(ui.actEnergyAx, t, Ewh_pos, '.', 'LineWidth', 0.5, 'Color',[1 0 0], ...
-            'DisplayName','E (+P) [Wh]');
-        plot(ui.actEnergyAx, t, Ewh_neg, '.', 'LineWidth', 0.5, 'Color',[0 0.6 0], ...
-            'DisplayName','E (-P) [Wh]');
+        plot(ui.actEnergyAx, t, Ewh_pos, '.', 'LineWidth', 0.5, 'Color',[1 0 0],   'DisplayName','E (+P) [Wh]');
+        plot(ui.actEnergyAx, t, Ewh_neg, '.', 'LineWidth', 0.5, 'Color',[0 0.6 0], 'DisplayName','E (-P) [Wh]');
         hold(ui.actEnergyAx,'off');
         legend(ui.actEnergyAx,'Location','best');
         title(ui.actEnergyAx, 'Energía consumida por los actuadores (Wh)');
         xlabel(ui.actEnergyAx, sprintf('Tiempo (s) — Fs=%.3g Hz', Fs));
         ylabel(ui.actEnergyAx, 'Energía (Wh)');
         grid(ui.actEnergyAx,'on');
-
-        % Sin notación científica en Y (energía)
         try, ytickformat(ui.actEnergyAx,'%.0f'); end
         try, ui.actEnergyAx.YRuler.Exponent = 0; end
 
-        % -------- Tabla: min, max, mean como STRING (sin 'e') --------
+        % -------- Tabla: min, max, mean como STRING -------------------------
         stats = @(x) [min(x), max(x), mean(x)];
-        s10   = stats(P10); s20 = stats(P20); s21 = stats(P21); s30 = stats(P30);
+        s10 = stats(P10); 
+        s20 = stats(P20); 
+        s21 = stats(P21); 
+        s30 = stats(P30);
 
         fmt = @(x) sprintf('%.0f', x);  % sin notación científica
-        if isfield(ui,'actStatsTable') && ~isempty(ui.actStatsTable) && isvalid(ui.actStatsTable)
-            ui.actStatsTable.Data = {
-                'P10', fmt(s10(1)), fmt(s10(2)), fmt(s10(3));
-                'P20', fmt(s20(1)), fmt(s20(2)), fmt(s20(3));
-                'P21', fmt(s21(1)), fmt(s21(2)), fmt(s21(3));
-                'P30', fmt(s30(1)), fmt(s30(2)), fmt(s30(3));
-            };
+        ui.actStatsTable.Data = {
+            'P10', fmt(s10(1)), fmt(s10(2)), fmt(s10(3));
+            'P20', fmt(s20(1)), fmt(s20(2)), fmt(s20(3));
+            'P21', fmt(s21(1)), fmt(s21(2)), fmt(s21(3));
+            'P30', fmt(s30(1)), fmt(s30(2)), fmt(s30(3));
+        };
+    end
+end
+
+%=========================================================================%%
+%                         LOCAL FUNCTIONS                                 %
+%=========================================================================%%
+
+function legendNames = buildLegendNames(plotOpts,nLogs)
+%BUILDLEGENDNAMES  Return cellstr legend names for each log.
+% Priority:
+%   1) User-entered labels (comma-separated) from Figure tab
+%   2) Base CSV file names
+%   3) Fallback: 'Log 1', 'Log 2', ...
+
+    % Get stored logNames (may be empty)
+    if isfield(plotOpts,'LogNames') && ~isempty(plotOpts.LogNames)
+        logNames = plotOpts.LogNames;
+    else
+        logNames = cell(1,nLogs);
+    end
+
+    % Get raw custom text
+    custom = '';
+    if isfield(plotOpts,'LegendText') && ~isempty(plotOpts.LegendText)
+        custom = strtrim(plotOpts.LegendText);
+    end
+
+    legendNames = cell(1,nLogs);
+
+    if ~isempty(custom)
+        parts = regexp(custom,',','split');
+        parts = strtrim(parts);
+        parts = parts(~cellfun(@isempty,parts));
+        for k = 1:nLogs
+            if k <= numel(parts)
+                legendNames{k} = parts{k};
+            elseif k <= numel(logNames) && ~isempty(logNames{k})
+                legendNames{k} = logNames{k};
+            else
+                legendNames{k} = sprintf('Log %d',k);
+            end
+        end
+    else
+        for k = 1:nLogs
+            if k <= numel(logNames) && ~isempty(logNames{k})
+                legendNames{k} = logNames{k};
+            else
+                legendNames{k} = sprintf('Log %d',k);
+            end
         end
     end
 end
 
-%=========================================================================%
-%                         LOCAL FUNCTIONS                                 %
-%=========================================================================%
 
 function [tbl, meta] = readKiteLog(filename)
 %READKITELOG  Read kite log CSV and assign fixed channel names.
@@ -1184,21 +1301,34 @@ end
 
 function plotLogData(plotGrid,tbl,xVar,yVars,labels,plotOpts,figSettings)
 % Dispatch to the appropriate plot type.
+% TBL can be a single table or a cell array of tables (multi-kite).
+
+    if istable(tbl)
+        tblCell = {tbl};
+    elseif iscell(tbl)
+        tblCell = tbl;
+    else
+        error('tbl must be a table or a cell array of tables.');
+    end
 
     switch plotOpts.PlotKind
         case 'histogram'
-            plotHistogramGrid(plotGrid,tbl,yVars,labels,plotOpts,figSettings);
+            plotHistogramGrid(plotGrid,tblCell,xVar,yVars,labels,plotOpts,figSettings);
         case 'boxplot'
-            plotBoxplotGrid(plotGrid,tbl,yVars,labels,plotOpts,figSettings);
+            plotBoxplotGrid(plotGrid,tblCell,xVar,yVars,labels,plotOpts,figSettings);
         otherwise % 'timeseries'
-            plotTimeSeriesGrid(plotGrid,tbl,xVar,yVars,labels,plotOpts,figSettings);
+            plotTimeSeriesGrid(plotGrid,tblCell,xVar,yVars,labels,plotOpts,figSettings);
     end
 end
 
 %-------------------------------------------------------------------------%
 
-function plotTimeSeriesGrid(plotGrid,tbl,xVar,yVars,labels,plotOpts,figSettings)
-%TIME SERIES plotting (single or stacked axes).
+function plotTimeSeriesGrid(plotGrid,tblCell,xVar,yVars,labels,plotOpts,figSettings)
+%TIME SERIES plotting (single or stacked axes) for one or more logs.
+
+    if ~iscell(tblCell)
+        tblCell = {tblCell};
+    end
 
     if isstring(yVars)
         yVars = cellstr(yVars);
@@ -1215,7 +1345,7 @@ function plotTimeSeriesGrid(plotGrid,tbl,xVar,yVars,labels,plotOpts,figSettings)
         ax = uiaxes(plotGrid);
         ax.Layout.Row    = 1;
         ax.Layout.Column = 1;
-        plotSingleAxes(ax,tbl,xVar,yVars,labels,plotOpts,figSettings);
+        plotSingleAxes(ax,tblCell,xVar,yVars,labels,plotOpts,figSettings);
     else
         plotGrid.RowHeight   = repmat({'1x'},1,nY);
         plotGrid.ColumnWidth = {'1x'};
@@ -1231,77 +1361,119 @@ function plotTimeSeriesGrid(plotGrid,tbl,xVar,yVars,labels,plotOpts,figSettings)
             if k ~= nY
                 localLabels.XLabel = '';
             end
-            localLabels.YLabel = '';
-
-            plotSingleAxes(ax,tbl,xVar,yVars(k),localLabels,plotOpts,figSettings);
+            % Do not force YLabel to empty: allow user override or defaults
+            plotSingleAxes(ax,tblCell,xVar,yVars(k),localLabels,plotOpts,figSettings);
         end
     end
 end
 
 %-------------------------------------------------------------------------%
-%  NEW: specialized histogram for normalized tether tensions
+%  Histogram plotting (multi-log, with optional tension distribution)    %
 %-------------------------------------------------------------------------%
 
-function plotHistogramGrid(plotGrid,tbl,yVars,labels,plotOpts,figSettings)
+function plotHistogramGrid(plotGrid,tblCell,xVar,yVars,labels,plotOpts,figSettings)
 %PLOTHISTOGRAMGRID  Distribution of normalized tether tensions.
 %
-%   If the table contains line-tension channels (ADC_LC_left/center/right
-%   or LC_left/center/right), we compute the normalized tension fractions
+%   For each log, if line-tension channels (ADC_LC_left/center/right or
+%   LC_left/center/right) are available, we compute normalized fractions
+%   and overlay histograms. One axes per line: central, left, right.
 %
-%       frac_i = LC_i / (LC_left + LC_center + LC_right)
-%
-%   and plot three stacked histograms (central, left, right).  If those
-%   channels are not present, we fall back to a generic histogram of the
-%   selected variables.
+%   If no logs provide those channels, falls back to generic histograms
+%   of the selected variables.
 
-    names = tbl.Properties.VariableNames;
+    if ~iscell(tblCell)
+        tblCell = {tblCell};
+    end
+    nLogs = numel(tblCell);
 
-    candidateSets = {
-        {'ADC_LC_left','ADC_LC_center','ADC_LC_right'}
-        {'LC_left','LC_center','LC_right'}
-    };
+    legendNamesAll = buildLegendNames(plotOpts,nLogs);
 
-    lineVars = {};
-    for s = 1:numel(candidateSets)
-        if all(ismember(candidateSets{s}, names))
-            lineVars = candidateSets{s};
-            break;
-        end
+    % X-range for cropping
+    xRange = [];
+    if isfield(plotOpts,'XRange')
+        xRange = plotOpts.XRange;
     end
 
-    % Fallback: generic histogram if we cannot find line tensions
-    if isempty(lineVars)
-        plotHistogramGridGeneric(plotGrid,tbl,yVars,labels,plotOpts,figSettings);
+    % Collect normalized tension fractions per log / per line
+    lineData = cell(nLogs,3);  % (log, lineIndex)
+    validLog = false(1,nLogs);
+
+    for j = 1:nLogs
+        tbl = tblCell{j};
+        if ~istable(tbl) || height(tbl)==0
+            continue;
+        end
+
+        % Apply cropping if requested
+        if ~isempty(xRange) && numel(xRange)==2 && ismember(xVar,tbl.Properties.VariableNames)
+            x = tbl.(xVar);
+            if isnumeric(x)
+                mask = isfinite(x) & x >= xRange(1) & x <= xRange(2);
+                tbl = tbl(mask,:);
+            end
+        end
+
+        if height(tbl)==0
+            continue;
+        end
+
+        names = tbl.Properties.VariableNames;
+
+        candidateSets = {
+            {'ADC_LC_left','ADC_LC_center','ADC_LC_right'}
+            {'LC_left','LC_center','LC_right'}
+        };
+
+        lineVars = {};
+        for s = 1:numel(candidateSets)
+            if all(ismember(candidateSets{s}, names))
+                lineVars = candidateSets{s};
+                break;
+            end
+        end
+
+        if isempty(lineVars)
+            continue;
+        end
+
+        L  = tbl.(lineVars{1});
+        C  = tbl.(lineVars{2});
+        R  = tbl.(lineVars{3});
+
+        sumT = L + C + R;
+        valid = isfinite(sumT) & sumT > 0 & ...
+                isfinite(L) & isfinite(C) & isfinite(R);
+
+        Ln = L(valid) ./ sumT(valid);
+        Cn = C(valid) ./ sumT(valid);
+        Rn = R(valid) ./ sumT(valid);
+
+        % Keep strictly in [0,1]
+        Ln = Ln(Ln >= 0 & Ln <= 1);
+        Cn = Cn(Cn >= 0 & Cn <= 1);
+        Rn = Rn(Rn >= 0 & Rn <= 1);
+
+        % Order to mimic example: central, left, right
+        lineData{j,1} = Cn;
+        lineData{j,2} = Ln;
+        lineData{j,3} = Rn;
+        validLog(j)   = ~isempty(Cn) || ~isempty(Ln) || ~isempty(Rn);
+    end
+
+    if ~any(validLog)
+        % Fallback: generic histogram if no tension channels
+        plotHistogramGridGeneric(plotGrid,tblCell,xVar,yVars,labels,plotOpts,figSettings);
         return;
     end
-
-    % left / center / right data
-    L  = tbl.(lineVars{1});
-    C  = tbl.(lineVars{2});
-    R  = tbl.(lineVars{3});
-
-    sumT = L + C + R;
-    valid = isfinite(sumT) & sumT > 0 & ...
-            isfinite(L) & isfinite(C) & isfinite(R);
-
-    Ln = L(valid) ./ sumT(valid);
-    Cn = C(valid) ./ sumT(valid);
-    Rn = R(valid) ./ sumT(valid);
-
-    % Keep values strictly inside [0,1] to avoid artefacts
-    Ln = Ln(Ln >= 0 & Ln <= 1);
-    Cn = Cn(Cn >= 0 & Cn <= 1);
-    Rn = Rn(Rn >= 0 & Rn <= 1);
-
-    % Order to mimic example: central, left, right
-    dataCell   = {Cn, Ln, Rn};
-    lineTitles = {'Línea central','Línea izquierda','Línea derecha'};
 
     delete(plotGrid.Children);
     plotGrid.RowHeight   = repmat({'1x'},1,3);
     plotGrid.ColumnWidth = {'1x'};
 
-    colors = chooseColorScheme(figSettings.ColorScheme,1); % same color
+    lineTitles  = {'Línea central','Línea izquierda','Línea derecha'};
+    logIndices  = find(validLog);
+    nUseLogs    = numel(logIndices);
+    colors      = chooseColorScheme(figSettings.ColorScheme,max(nUseLogs,1));
 
     for k = 1:3
         ax = uiaxes(plotGrid);
@@ -1317,11 +1489,23 @@ function plotHistogramGrid(plotGrid,tbl,yVars,labels,plotOpts,figSettings)
             grid(ax,'off');
         end
 
-        h = histogram(ax,dataCell{k}, ...
-            'NumBins',50, ...
-            'BinLimits',[0 1]);
-        h.FaceColor = colors(1,:);
-        h.EdgeColor = 'black'; % Set the edge color to black for a more elegant look
+        hold(ax,'on');
+        for idx = 1:nUseLogs
+            j = logIndices(idx);
+            dataK = lineData{j,k};
+            if isempty(dataK)
+                continue;
+            end
+            dispName = legendNamesAll{j};   % <--- use CSV/custom legend
+
+            h = histogram(ax,dataK, ...
+                'NumBins',50, ...
+                'BinLimits',[0 1], ...
+                'DisplayName', dispName);
+            h.FaceColor = colors(idx,:);
+            h.EdgeColor = 'black';
+        end
+        hold(ax,'off');
 
         % Titles
         if k == 1 && ~isempty(strtrim(labels.Title))
@@ -1344,15 +1528,36 @@ function plotHistogramGrid(plotGrid,tbl,yVars,labels,plotOpts,figSettings)
             xlabel(ax,'','Interpreter','latex');
         end
 
-        ylabel(ax,'Recuentos','Interpreter','latex');
+        % Y label: allow custom override
+        if ~isempty(strtrim(labels.YLabel))
+            ylabel(ax,labels.YLabel,'Interpreter','latex');
+        else
+            ylabel(ax,'Recuentos','Interpreter','latex');
+        end
         ax.YLabel.FontSize = figSettings.LabelFontSize;
 
         xlim(ax,[0 1]);
+
+        if plotOpts.ShowLegend && nUseLogs > 1
+            lg = legend(ax,'show','Interpreter','latex','Location','best');
+            if ~isempty(lg) && isvalid(lg)
+                lg.FontSize = figSettings.LegendFontSize;
+            end
+        else
+            legend(ax,'off');
+        end
     end
 end
 
-function plotHistogramGridGeneric(plotGrid,tbl,yVars,labels,plotOpts,figSettings)
+function plotHistogramGridGeneric(plotGrid,tblCell,xVar,yVars,labels,plotOpts,figSettings)
 %PLOTHISTOGRAMGRIDGENERIC  Fallback: histograms of selected variables.
+
+    if ~iscell(tblCell)
+        tblCell = {tblCell};
+    end
+    nLogs = numel(tblCell);
+
+    legendNames = buildLegendNames(plotOpts,nLogs);  % NEW
 
     if isstring(yVars)
         yVars = cellstr(yVars);
@@ -1376,7 +1581,13 @@ function plotHistogramGridGeneric(plotGrid,tbl,yVars,labels,plotOpts,figSettings
     plotGrid.RowHeight   = repmat({'1x'},1,nY);
     plotGrid.ColumnWidth = {'1x'};
 
-    colors = chooseColorScheme(figSettings.ColorScheme,1); % same color
+    colors = chooseColorScheme(figSettings.ColorScheme,max(nLogs,1));
+
+    % X-range for cropping
+    xRange = [];
+    if isfield(plotOpts,'XRange')
+        xRange = plotOpts.XRange;
+    end
 
     for k = 1:nY
         ax = uiaxes(plotGrid);
@@ -1392,12 +1603,41 @@ function plotHistogramGridGeneric(plotGrid,tbl,yVars,labels,plotOpts,figSettings
             grid(ax,'off');
         end
 
-        data = tbl.(yVars{k});
-        data = data(~isnan(data));
+        hold(ax,'on');
+        anyPlotted = false;
+        for j = 1:nLogs
+            tbl = tblCell{j};
+            if ~istable(tbl) || height(tbl)==0
+                continue;
+            end
 
-        h = histogram(ax,data);
-        h.FaceColor = colors(1,:);
-        h.EdgeColor = 'none';
+            % Apply cropping if requested
+            if ~isempty(xRange) && numel(xRange)==2 && ismember(xVar,tbl.Properties.VariableNames)
+                x = tbl.(xVar);
+                if isnumeric(x)
+                    mask = isfinite(x) & x >= xRange(1) & x <= xRange(2);
+                    tbl = tbl(mask,:);
+                end
+            end
+
+            if height(tbl)==0 || ~ismember(yVars{k}, tbl.Properties.VariableNames)
+                continue;
+            end
+
+            data = tbl.(yVars{k});
+            data = data(~isnan(data));
+
+            if isempty(data)
+                continue;
+            end
+
+            h = histogram(ax,data, ...
+                'DisplayName', legendNames{j});
+            h.FaceColor = colors(j,:);
+            h.EdgeColor = 'none';
+            anyPlotted  = true;
+        end
+        hold(ax,'off');
 
         if k == 1 && ~isempty(strtrim(labels.Title))
             title(ax,labels.Title,'Interpreter','latex');
@@ -1411,19 +1651,43 @@ function plotHistogramGridGeneric(plotGrid,tbl,yVars,labels,plotOpts,figSettings
         else
             xlabel(ax,'','Interpreter','latex');   % no auto variable name
         end
-
         ax.XLabel.FontSize = figSettings.LabelFontSize;
 
-        ylabel(ax,'Counts','Interpreter','latex');
+        if ~isempty(strtrim(labels.YLabel))
+            ylabel(ax,labels.YLabel,'Interpreter','latex');
+        else
+            ylabel(ax,'Counts','Interpreter','latex');
+        end
         ax.YLabel.FontSize = figSettings.LabelFontSize;
+
+        if plotOpts.ShowLegend && nLogs > 1 && anyPlotted
+            lg = legend(ax,'show','Interpreter','latex','Location','best');
+            if ~isempty(lg) && isvalid(lg)
+                lg.FontSize = figSettings.LegendFontSize;
+            end
+        else
+            legend(ax,'off');
+        end
+
+        if ~anyPlotted
+            text(ax,0.5,0.5,'No numeric data for selected variable(s)', ...
+                'HorizontalAlignment','center','Units','normalized');
+        end
     end
 end
 
 %-------------------------------------------------------------------------%
 
-function plotBoxplotGrid(plotGrid,tbl,yVars,labels,plotOpts,figSettings)
-%BOXPLOTGRID  Boxplot comparison (one axes) + jittered scatter.
-%   Intended mainly for CONTROL_deltaL and CONTROL_thirdLineDeltaL.
+function plotBoxplotGrid(plotGrid,tblCell,xVar,yVars,labels,plotOpts,figSettings)
+%BOXPLOTGRID  Boxplot comparison across variables and logs (one axes).
+%   For multi-kite analysis, each (variable, log) pair becomes a group.
+
+    if ~iscell(tblCell)
+        tblCell = {tblCell};
+    end
+    nLogs = numel(tblCell);
+
+    legendNames = buildLegendNames(plotOpts,nLogs);  % NEW
 
     if isstring(yVars)
         yVars = cellstr(yVars);
@@ -1454,29 +1718,78 @@ function plotBoxplotGrid(plotGrid,tbl,yVars,labels,plotOpts,figSettings)
         return;
     end
 
-    % Collect data and group indices
-    allData = [];
-    grpIdx  = [];
-    for k = 1:nY
-        y = tbl.(yVars{k});
-        y = y(~isnan(y));
-        allData = [allData; y(:)];
-        grpIdx  = [grpIdx; k*ones(numel(y),1)];
+    % X-range for cropping
+    xRange = [];
+    if isfield(plotOpts,'XRange')
+        xRange = plotOpts.XRange;
     end
 
-    groupCat = categorical(grpIdx,1:nY,yVars);
+    allData   = [];
+    grpIdx    = [];
+    grpLabels = {};
+    g         = 0;
+
+    for j = 1:nLogs
+        tbl = tblCell{j};
+        if ~istable(tbl) || height(tbl)==0
+            continue;
+        end
+
+        % Cropping
+        if ~isempty(xRange) && numel(xRange)==2 && ismember(xVar,tbl.Properties.VariableNames)
+            x = tbl.(xVar);
+            if isnumeric(x)
+                mask = isfinite(x) & x >= xRange(1) & x <= xRange(2);
+                tbl = tbl(mask,:);
+            end
+        end
+
+        if height(tbl)==0
+            continue;
+        end
+
+        names = tbl.Properties.VariableNames;
+
+        for k = 1:nY
+            varName = yVars{k};
+            if ~ismember(varName,names)
+                continue;
+            end
+            y = tbl.(varName);
+            y = y(~isnan(y));
+            if isempty(y)
+                continue;
+            end
+
+            g = g + 1;
+            allData = [allData; y(:)];
+            grpIdx  = [grpIdx; g*ones(numel(y),1)];
+            if nLogs == 1
+                grpLabels{g} = varName;
+            else
+                grpLabels{g} = sprintf('%s (%s)', varName, legendNames{j});  % NEW
+            end
+        end
+    end
+
+    if isempty(allData)
+        title(ax,'No numeric data for selected variable(s)','Interpreter','latex');
+        return;
+    end
+
+    groupCat = categorical(grpIdx,1:g,grpLabels);
 
     % Boxplot
     boxchart(ax,groupCat,allData);
     ax.XTickLabelRotation = 0;
 
-    % Jittered scatter (red crosses, like example)
+    % Jittered scatter overlay
     hold(ax,'on');
-    for k = 1:nY
-        y = tbl.(yVars{k});
-        y = y(~isnan(y));
-        xj = k + (rand(size(y))-0.5)*0.15;
-        scatter(ax,xj,y,6,'r','x','MarkerEdgeAlpha',0.4);
+    for gi = 1:g
+        vals = allData(grpIdx == gi);
+        if isempty(vals), continue; end
+        xj = gi + (rand(size(vals))-0.5)*0.15;
+        scatter(ax,xj,vals,6,'r','x','MarkerEdgeAlpha',0.4);
     end
     hold(ax,'off');
 
@@ -1489,6 +1802,8 @@ function plotBoxplotGrid(plotGrid,tbl,yVars,labels,plotOpts,figSettings)
     end
 
     if ~isempty(strtrim(labels.XLabel))
+        xlabel(ax,labels.XLabel,'Interpreter','latex');
+    else
         xlabel(ax,'','Interpreter','latex');
     end
     ax.XLabel.FontSize = figSettings.LabelFontSize;
@@ -1505,10 +1820,15 @@ end
 
 %-------------------------------------------------------------------------%
 
-function plotSingleAxes(ax,tbl,xVar,yVars,labels,plotOpts,figSettings)
-%PLOTSINGLEAXES  Low-level time-series plotting on one axes.
+function plotSingleAxes(ax,tblCell,xVar,yVars,labels,plotOpts,figSettings)
+%PLOTSINGLEAXES  Low-level time-series plotting on one axes (multi-log).
 
-    x = tbl.(xVar);
+    if ~iscell(tblCell)
+        tblCell = {tblCell};
+    end
+    nLogs = numel(tblCell);
+
+    legendNames = buildLegendNames(plotOpts,nLogs);  % NEW
 
     if isstring(yVars)
         yVars = cellstr(yVars);
@@ -1516,28 +1836,103 @@ function plotSingleAxes(ax,tbl,xVar,yVars,labels,plotOpts,figSettings)
         yVars = {yVars};
     end
 
-    nCurves = numel(yVars);
+    % X-range for cropping
+    xRange = [];
+    if isfield(plotOpts,'XRange')
+        xRange = plotOpts.XRange;
+    end
+
+    % Determine which (log,variable) pairs have valid numeric data
+    curveList = [];  % rows [logIndex, yIndex]
+    for j = 1:nLogs
+        tbl = tblCell{j};
+        if ~istable(tbl) || height(tbl)==0
+            continue;
+        end
+        names = tbl.Properties.VariableNames;
+        if ~ismember(xVar,names)
+            continue;
+        end
+        x = tbl.(xVar);
+        useRange = ~isempty(xRange) && numel(xRange)==2 && isnumeric(x);
+
+        for k = 1:numel(yVars)
+            yName = yVars{k};
+            if ~ismember(yName,names)
+                continue;
+            end
+            y = tbl.(yName);
+            if ~isnumeric(y)
+                continue;
+            end
+            good = isfinite(x) & isfinite(y);
+            if useRange
+                good = good & x >= xRange(1) & x <= xRange(2);
+            end
+            if any(good)
+                curveList(end+1,:) = [j,k]; %#ok<AGROW>
+            end
+        end
+    end
+
+    nCurves = size(curveList,1);
+    if nCurves == 0
+        cla(ax);
+        title(ax,'No valid data for selected variable(s) and range','Interpreter','latex');
+        legend(ax,'off');
+        return;
+    end
 
     ax.FontName = figSettings.FontName;
     ax.FontSize = figSettings.TickFontSize;
     box(ax,'on');
 
     colors = chooseColorScheme(figSettings.ColorScheme,nCurves);
-    colororder(ax,colors);
 
     hold(ax,'on');
-    for k = 1:nCurves
-        y = tbl.(yVars{k});
+    for idx = 1:nCurves
+        j = curveList(idx,1);
+        k = curveList(idx,2);
+
+        tbl = tblCell{j};
+        x   = tbl.(xVar);
+        y   = tbl.(yVars{k});
+
+        if isnumeric(x)
+            good = isfinite(x) & isfinite(y);
+            if ~isempty(xRange) && numel(xRange)==2
+                good = good & x >= xRange(1) & x <= xRange(2);
+            end
+        else
+            good = isfinite(y);
+        end
+
+        xk = x(good);
+        yk = y(good);
+        if isempty(xk)
+            continue;
+        end
+
+        color = colors(idx,:);
+        if nLogs == 1
+            displayName = yVars{k};
+        else
+            displayName = sprintf('%s (%s)', yVars{k}, legendNames{j});
+        end
+
         switch figSettings.PlotStyle
             case 'linemarker'
-                p = plot(ax,x,y,'DisplayName',yVars{k});
+                p = plot(ax,xk,yk,'DisplayName',displayName);
                 p.Marker    = '.';
                 p.LineWidth = 1.2;
+                p.Color     = color;
             case 'scatter'
-                scatter(ax,x,y,6,'DisplayName',yVars{k},'Marker','.');
+                scatter(ax,xk,yk,6,color,'Marker','.', ...
+                    'DisplayName',displayName);
             otherwise % 'line'
-                p = plot(ax,x,y,'DisplayName',yVars{k});
+                p = plot(ax,xk,yk,'DisplayName',displayName);
                 p.LineWidth = 1.2;
+                p.Color     = color;
         end
     end
     hold(ax,'off');
@@ -1557,13 +1952,7 @@ function plotSingleAxes(ax,tbl,xVar,yVars,labels,plotOpts,figSettings)
         legend(ax,'off');
     end
 
-    % X label: only if the user provided one; otherwise blank
-    if ~isempty(strtrim(labels.XLabel))
-        xlabel(ax,labels.XLabel,'Interpreter','latex');
-    else
-        xlabel(ax,'','Interpreter','latex');
-    end
-
+    % X label: user-defined or variable name
     if ~isempty(strtrim(labels.XLabel))
         xlabel(ax,labels.XLabel,'Interpreter','latex');
     else
@@ -1571,6 +1960,7 @@ function plotSingleAxes(ax,tbl,xVar,yVars,labels,plotOpts,figSettings)
     end
     ax.XLabel.FontSize = figSettings.LabelFontSize;
 
+    % Y label: user-defined or based on variables
     if ~isempty(strtrim(labels.YLabel))
         ylabel(ax,labels.YLabel,'Interpreter','latex');
     else
@@ -1582,11 +1972,7 @@ function plotSingleAxes(ax,tbl,xVar,yVars,labels,plotOpts,figSettings)
     end
     ax.YLabel.FontSize = figSettings.LabelFontSize;
 
-    if isa(x,'datetime')
-        ax.XTickLabelRotation = 30;
-    else
-        ax.XTickLabelRotation = 0;
-    end
+    ax.XTickLabelRotation = 0;
 end
 
 %-------------------------------------------------------------------------%
@@ -1633,7 +2019,7 @@ end
 
 function [titleStr,xLabelStr,yLabelStr] = defaultLabels(meta,xVar,yVars)
 
-    if iscell(xVar); xVar = xVar{1}; end
+    if iscell(xVar);  xVar = xVar{1}; end
     if isstring(xVar); xVar = char(xVar); end
 
     if isfield(meta,'file') && ~isempty(meta.file)
@@ -1663,5 +2049,3 @@ function [titleStr,xLabelStr,yLabelStr] = defaultLabels(meta,xVar,yVars)
         yLabelStr = 'Signals';
     end
 end
-
-    
